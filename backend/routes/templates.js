@@ -1,17 +1,20 @@
-const router   = require('express').Router();
-const Template = require('../models/Template');
-const ActivityLog = require('../models/ActivityLog');
+const router = require('express').Router();
+const db     = require('../utils/supabase');
 const { verifyToken } = require('../middleware/auth');
 const { DEFAULT_TEMPLATES } = require('../utils/generateMessage');
 
-// GET /api/templates/:role  — returns all templates for the logged-in secretary
+// GET /api/templates
 router.get('/', verifyToken, async (req, res) => {
   try {
-    const saved = await Template.find({ secretaryId: req.user.userId });
+    const { data: saved } = await db
+      .from('templates')
+      .select('*')
+      .eq('secretary_id', req.user.userId);
+
     const result = {};
     Object.keys(DEFAULT_TEMPLATES).forEach(key => {
-      const custom = saved.find(t => t.actionType === key);
-      result[key] = custom ? custom.templateText : DEFAULT_TEMPLATES[key];
+      const custom = saved?.find(t => t.action_type === key);
+      result[key] = custom ? custom.template_text : DEFAULT_TEMPLATES[key];
     });
     res.json(result);
   } catch {
@@ -19,22 +22,23 @@ router.get('/', verifyToken, async (req, res) => {
   }
 });
 
-// PUT /api/templates  — save/update a template
+// PUT /api/templates
 router.put('/', verifyToken, async (req, res) => {
   try {
     const { actionType, templateText } = req.body;
     if (!actionType || !templateText)
       return res.status(400).json({ error: 'actionType dhe templateText janë të detyrueshëm.' });
 
-    await Template.findOneAndUpdate(
-      { secretaryId: req.user.userId, actionType },
-      { templateText, updatedAt: new Date() },
-      { upsert: true, new: true }
-    );
+    await db.from('templates').upsert({
+      secretary_id: req.user.userId,
+      action_type: actionType,
+      template_text: templateText,
+      updated_at: new Date(),
+    }, { onConflict: 'secretary_id,action_type' });
 
-    await ActivityLog.create({
-      actorId: req.user.userId, actorRole: req.user.role,
-      actionType: 'template_edit', metadata: { actionType },
+    await db.from('activity_logs').insert({
+      actor_id: req.user.userId, actor_role: req.user.role,
+      action_type: 'template_edit', metadata: { action_type: actionType },
     });
 
     res.json({ success: true });

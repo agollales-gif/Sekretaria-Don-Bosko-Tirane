@@ -1,24 +1,26 @@
-const router      = require('express').Router();
-const bcrypt      = require('bcrypt');
-const User        = require('../models/User');
-const MessageLog  = require('../models/MessageLog');
-const ActivityLog = require('../models/ActivityLog');
+const router = require('express').Router();
+const bcrypt = require('bcrypt');
+const db     = require('../utils/supabase');
 const { verifyToken, requireRole } = require('../middleware/auth');
 
 // GET /api/admin/secretaries
 router.get('/secretaries', verifyToken, requireRole('admin'), async (req, res) => {
   try {
-    const secretaries = await User.find({ role: { $ne: 'admin' } }).select('-passwordHash');
+    const { data: secretaries } = await db
+      .from('users')
+      .select('id, username, role, email, phone, last_login, created_at')
+      .neq('role', 'admin');
 
-    // Add today's message count for each
     const today = new Date(); today.setHours(0, 0, 0, 0);
+
     const result = await Promise.all(secretaries.map(async s => {
-      const count = await MessageLog.countDocuments({
-        secretaryId: s._id,
-        timestamp: { $gte: today },
-        actionType: { $ne: 'korrigjim' },
-      });
-      return { ...s.toObject(), messageCountToday: count };
+      const { count } = await db
+        .from('message_logs')
+        .select('*', { count: 'exact', head: true })
+        .eq('secretary_id', s.id)
+        .neq('action_type', 'korrigjim')
+        .gte('timestamp', today.toISOString());
+      return { ...s, message_count_today: count || 0 };
     }));
 
     res.json(result);
@@ -34,16 +36,14 @@ router.put('/reset-password', verifyToken, requireRole('admin'), async (req, res
     if (!secretaryId || !newPassword || newPassword.length < 6)
       return res.status(400).json({ error: 'Të dhëna të pavlefshme.' });
 
-    const user = await User.findById(secretaryId);
-    if (!user) return res.status(404).json({ error: 'Sekretaria nuk u gjet.' });
+    const hash = await bcrypt.hash(newPassword, 10);
+    const { error } = await db.from('users').update({ password_hash: hash }).eq('id', secretaryId);
+    if (error) throw error;
 
-    user.passwordHash = await bcrypt.hash(newPassword, 10);
-    await user.save();
-
-    await ActivityLog.create({
-      actorId: req.user.userId, actorRole: 'admin',
-      actionType: 'password_change',
-      metadata: { targetId: secretaryId, changedBy: 'admin' },
+    await db.from('activity_logs').insert({
+      actor_id: req.user.userId, actor_role: 'admin',
+      action_type: 'password_change',
+      metadata: { target_id: secretaryId, changed_by: 'admin' },
     });
 
     res.json({ success: true });
@@ -56,21 +56,21 @@ router.put('/reset-password', verifyToken, requireRole('admin'), async (req, res
 router.get('/activity-feed', verifyToken, requireRole('admin'), async (req, res) => {
   try {
     const { actorId, actionType, from, to } = req.query;
-    const filter = {};
-    if (actorId)    filter.actorId    = actorId;
-    if (actionType) filter.actionType = actionType;
-    if (from || to) {
-      filter.timestamp = {};
-      if (from) filter.timestamp.$gte = new Date(from);
-      if (to)   filter.timestamp.$lte = new Date(to);
-    }
 
-    const feed = await ActivityLog.find(filter)
-      .populate('actorId', 'username role')
-      .sort({ timestamp: -1 })
+    let query = db
+      .from('activity_logs')
+      .select('*, users(username, role)')
+      .order('timestamp', { ascending: false })
       .limit(200);
 
-    res.json(feed);
+    if (actorId)    query = query.eq('actor_id', actorId);
+    if (actionType) query = query.eq('action_type', actionType);
+    if (from)       query = query.gte('timestamp', from);
+    if (to)         query = query.lte('timestamp', to);
+
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json(data);
   } catch {
     res.status(500).json({ error: 'Gabim serveri.' });
   }

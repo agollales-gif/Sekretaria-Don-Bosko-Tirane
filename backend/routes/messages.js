@@ -1,11 +1,15 @@
-const router      = require('express').Router();
-const Student     = require('../models/Student');
-const MessageLog  = require('../models/MessageLog');
-const ActivityLog = require('../models/ActivityLog');
+const router = require('express').Router();
+const db     = require('../utils/supabase');
 const { verifyToken } = require('../middleware/auth');
 const { generateMessage } = require('../utils/generateMessage');
-const { sendWhatsAppMessage, getStatus } = require('../utils/whatsapp');
-const { format } = require('date-fns');
+const { sendWhatsAppMessage } = require('../utils/whatsapp');
+
+function nowFormatted() {
+  const d = new Date();
+  const time = d.toTimeString().slice(0, 5);
+  const date = `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
+  return { time, date };
+}
 
 // POST /api/messages/send
 router.post('/send', verifyToken, async (req, res) => {
@@ -14,45 +18,41 @@ router.post('/send', verifyToken, async (req, res) => {
     if (!studentId || !actionType)
       return res.status(400).json({ error: 'studentId dhe actionType janë të detyrueshëm.' });
 
-    const student = await Student.findById(studentId).populate('classId');
+    const { data: student } = await db
+      .from('students')
+      .select('*, classes(name)')
+      .eq('id', studentId)
+      .single();
     if (!student) return res.status(404).json({ error: 'Nxënësi nuk u gjet.' });
 
-    const now  = new Date();
-    const time = customTime || format(now, 'HH:mm');
-    const date = format(now, 'dd/MM/yyyy');
-    const name = `${student.firstName} ${student.lastName}`;
+    const { time, date } = nowFormatted();
+    const name = `${student.first_name} ${student.last_name}`;
+    const text = await generateMessage(req.user.userId, actionType, name, customTime || time, date);
 
-    const text = await generateMessage(req.user.userId, actionType, name, time, date);
-
-    const log = await MessageLog.create({
-      studentId:   student._id,
-      secretaryId: req.user.userId,
-      actionType,
-      messageText: text,
-      parentPhone: student.parentPhone,
-      status:      'pending',
-    });
+    // Insert log as pending
+    const { data: log } = await db.from('message_logs').insert({
+      student_id: student.id, secretary_id: req.user.userId,
+      action_type: actionType, message_text: text,
+      parent_phone: student.parent_phone, status: 'pending',
+    }).select().single();
 
     // Send via WhatsApp
     try {
-      await sendWhatsAppMessage(student.parentPhone, text);
-      log.status = 'sent';
+      await sendWhatsAppMessage(student.parent_phone, text);
+      await db.from('message_logs').update({ status: 'sent' }).eq('id', log.id);
     } catch (waErr) {
-      log.status = 'failed';
-      await log.save();
-      return res.status(503).json({ success: false, error: waErr.message, logId: log._id });
+      await db.from('message_logs').update({ status: 'failed' }).eq('id', log.id);
+      return res.status(503).json({ success: false, error: waErr.message, logId: log.id });
     }
 
-    await log.save();
-
-    await ActivityLog.create({
-      actorId: req.user.userId, actorRole: req.user.role,
-      actionType: 'message_sent',
-      metadata: { studentName: name, class: student.classId?.name, actionType },
+    await db.from('activity_logs').insert({
+      actor_id: req.user.userId, actor_role: req.user.role,
+      action_type: 'message_sent',
+      metadata: { student_name: name, class: student.classes?.name, action_type: actionType },
     });
 
-    res.json({ success: true, logId: log._id });
-  } catch (err) {
+    res.json({ success: true, logId: log.id });
+  } catch {
     res.status(500).json({ error: 'Gabim serveri.' });
   }
 });
@@ -63,45 +63,39 @@ router.post('/correction', verifyToken, async (req, res) => {
     const { originalLogId } = req.body;
     if (!originalLogId) return res.status(400).json({ error: 'originalLogId mungon.' });
 
-    const original = await MessageLog.findById(originalLogId).populate('studentId');
+    const { data: original } = await db
+      .from('message_logs')
+      .select('*, students(first_name, last_name, parent_phone)')
+      .eq('id', originalLogId)
+      .single();
     if (!original) return res.status(404).json({ error: 'Mesazhi origjinal nuk u gjet.' });
 
-    const student = original.studentId;
-    const name    = `${student.firstName} ${student.lastName}`;
-    const now     = new Date();
-    const time    = format(now, 'HH:mm');
-    const date    = format(now, 'dd/MM/yyyy');
-
+    const { time, date } = nowFormatted();
+    const name = `${original.students.first_name} ${original.students.last_name}`;
     const text = await generateMessage(req.user.userId, 'korrigjim', name, time, date);
 
-    const log = await MessageLog.create({
-      studentId:      student._id,
-      secretaryId:    req.user.userId,
-      actionType:     'korrigjim',
-      messageText:    text,
-      parentPhone:    student.parentPhone,
-      status:         'pending',
-      isCorrectionOf: original._id,
-    });
+    const { data: log } = await db.from('message_logs').insert({
+      student_id: original.student_id, secretary_id: req.user.userId,
+      action_type: 'korrigjim', message_text: text,
+      parent_phone: original.students.parent_phone,
+      status: 'pending', is_correction_of: original.id,
+    }).select().single();
 
     try {
-      await sendWhatsAppMessage(student.parentPhone, text);
-      log.status = 'sent';
+      await sendWhatsAppMessage(original.students.parent_phone, text);
+      await db.from('message_logs').update({ status: 'sent' }).eq('id', log.id);
     } catch (waErr) {
-      log.status = 'failed';
-      await log.save();
+      await db.from('message_logs').update({ status: 'failed' }).eq('id', log.id);
       return res.status(503).json({ success: false, error: waErr.message });
     }
 
-    await log.save();
-
-    await ActivityLog.create({
-      actorId: req.user.userId, actorRole: req.user.role,
-      actionType: 'correction_sent',
-      metadata: { studentName: name, originalLogId },
+    await db.from('activity_logs').insert({
+      actor_id: req.user.userId, actor_role: req.user.role,
+      action_type: 'correction_sent',
+      metadata: { student_name: name, original_log_id: originalLogId },
     });
 
-    res.json({ success: true, logId: log._id });
+    res.json({ success: true, logId: log.id });
   } catch {
     res.status(500).json({ error: 'Gabim serveri.' });
   }
@@ -111,19 +105,19 @@ router.post('/correction', verifyToken, async (req, res) => {
 router.get('/history', verifyToken, async (req, res) => {
   try {
     const { from, to } = req.query;
-    const filter = { secretaryId: req.user.userId };
-    if (from || to) {
-      filter.timestamp = {};
-      if (from) filter.timestamp.$gte = new Date(from);
-      if (to)   filter.timestamp.$lte = new Date(to);
-    }
-
-    const logs = await MessageLog.find(filter)
-      .populate({ path: 'studentId', select: 'firstName lastName', populate: { path: 'classId', select: 'name' } })
-      .sort({ timestamp: -1 })
+    let query = db
+      .from('message_logs')
+      .select('*, students(first_name, last_name, classes(name))')
+      .eq('secretary_id', req.user.userId)
+      .order('timestamp', { ascending: false })
       .limit(100);
 
-    res.json(logs);
+    if (from) query = query.gte('timestamp', from);
+    if (to)   query = query.lte('timestamp', to);
+
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json(data);
   } catch {
     res.status(500).json({ error: 'Gabim serveri.' });
   }

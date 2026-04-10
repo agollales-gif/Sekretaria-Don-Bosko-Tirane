@@ -1,4 +1,4 @@
-# Don Bosko — Backend (Faza II)
+# Don Bosko — Backend (Faza II) · Supabase + Express
 
 ## Setup
 
@@ -6,8 +6,15 @@
 cd backend
 npm install
 cp .env.example .env
-# Plotëso MONGODB_URI dhe JWT_SECRET në .env
+# Plotëso SUPABASE_URL, SUPABASE_SERVICE_KEY dhe JWT_SECRET
 ```
+
+## Supabase — Hapat
+
+1. Krijo projekt falas në [supabase.com](https://supabase.com)
+2. Shko te **SQL Editor** dhe ekzekuto të gjithë kodin nga `supabase_schema.sql`
+3. Kopjo **Project URL** dhe **service_role key** nga Settings > API
+4. Vendosi në `.env`
 
 ## Seed databaza
 
@@ -24,36 +31,24 @@ npm run dev
 ## Deploy (Railway)
 
 1. Krijo projekt të ri në [railway.app](https://railway.app)
-2. Lidhe me GitHub repo-n
+2. Lidhe me GitHub repo-n (`backend/` folder)
 3. Shto variablat nga `.env.example` në panelin e Railway
-4. Railway deploy-on automatikisht me çdo `git push`
+4. Testo: `GET /api/health` → `{ status: 'ok' }`
 
-## Endpoints kryesore
+## Variablat e nevojshme (.env)
 
-| Metoda | Route | Funksioni |
-|--------|-------|-----------|
-| POST | /api/auth/login | Hyrja |
-| POST | /api/auth/logout | Dalja |
-| POST | /api/auth/change-password | Ndrysho fjalëkalimin |
-| GET | /api/classes | Klasat sipas rolit |
-| GET | /api/classes/:id/students | Nxënësit e klasës |
-| POST | /api/messages/send | Dërgo mesazh WhatsApp |
-| POST | /api/messages/correction | Dërgo korrigjim |
-| GET | /api/messages/history | Historia |
-| GET | /api/templates | Merr shabllonët |
-| PUT | /api/templates | Ruaj shabllonin |
-| GET | /api/admin/secretaries | Lista sekretareve |
-| PUT | /api/admin/reset-password | Rivendos fjalëkalimin |
-| GET | /api/admin/activity-feed | Feed aktivitetit |
-| GET | /api/whatsapp/qr | QR kodi |
-| GET | /api/whatsapp/status | Statusi WhatsApp |
-| GET | /api/health | Health check |
+| Variabla | Vlera |
+|----------|-------|
+| `SUPABASE_URL` | `https://xxxx.supabase.co` |
+| `SUPABASE_SERVICE_KEY` | service_role key nga Supabase |
+| `JWT_SECRET` | string i gjatë random |
+| `JWT_EXPIRES_IN` | `8h` |
+| `PORT` | `3001` |
+| `FRONTEND_URL` | `https://sekretaria.vercel.app` |
 
-## Lidhja me Frontend-in (Alesjo)
+## Lidhja me Frontend-in
 
 Shto në `.env.production` të projektit React:
 ```
 VITE_API_URL=https://donbosko-backend.railway.app
 ```
-
-Pastaj zëvendëso `localStorage` auth me thirrje JWT reale.

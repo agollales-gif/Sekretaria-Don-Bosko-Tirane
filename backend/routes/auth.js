@@ -1,8 +1,7 @@
 const router  = require('express').Router();
 const bcrypt  = require('bcrypt');
 const jwt     = require('jsonwebtoken');
-const User    = require('../models/User');
-const ActivityLog = require('../models/ActivityLog');
+const db      = require('../utils/supabase');
 const { verifyToken } = require('../middleware/auth');
 
 // POST /api/auth/login
@@ -12,25 +11,28 @@ router.post('/login', async (req, res) => {
     if (!username || !password)
       return res.status(400).json({ error: 'Username dhe fjalëkalimi janë të detyrueshëm.' });
 
-    const user = await User.findOne({ username: username.trim().toLowerCase() });
-    if (!user) return res.status(401).json({ error: 'Kredencialet janë të gabuara.' });
+    const { data: user, error } = await db
+      .from('users')
+      .select('*')
+      .eq('username', username.trim().toLowerCase())
+      .single();
 
-    const valid = await bcrypt.compare(password, user.passwordHash);
+    if (error || !user) return res.status(401).json({ error: 'Kredencialet janë të gabuara.' });
+
+    const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) return res.status(401).json({ error: 'Kredencialet janë të gabuara.' });
 
     const token = jwt.sign(
-      { userId: user._id, role: user.role, username: user.username },
+      { userId: user.id, role: user.role, username: user.username },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
     );
 
-    user.lastLogin = new Date();
-    await user.save();
-
-    await ActivityLog.create({ actorId: user._id, actorRole: user.role, actionType: 'login', metadata: {} });
+    await db.from('users').update({ last_login: new Date() }).eq('id', user.id);
+    await db.from('activity_logs').insert({ actor_id: user.id, actor_role: user.role, action_type: 'login', metadata: {} });
 
     res.json({ token, role: user.role, username: user.username, expiresAt: Date.now() + 8 * 3600 * 1000 });
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: 'Gabim serveri.' });
   }
 });
@@ -38,7 +40,7 @@ router.post('/login', async (req, res) => {
 // POST /api/auth/logout
 router.post('/logout', verifyToken, async (req, res) => {
   try {
-    await ActivityLog.create({ actorId: req.user.userId, actorRole: req.user.role, actionType: 'logout', metadata: {} });
+    await db.from('activity_logs').insert({ actor_id: req.user.userId, actor_role: req.user.role, action_type: 'logout', metadata: {} });
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: 'Gabim serveri.' });
@@ -52,17 +54,13 @@ router.post('/change-password', verifyToken, async (req, res) => {
     if (!currentPassword || !newPassword || newPassword.length < 6)
       return res.status(400).json({ error: 'Të dhëna të pavlefshme.' });
 
-    const user = await User.findById(req.user.userId);
-    const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+    const { data: user } = await db.from('users').select('*').eq('id', req.user.userId).single();
+    const valid = await bcrypt.compare(currentPassword, user.password_hash);
     if (!valid) return res.status(401).json({ error: 'Fjalëkalimi aktual është i gabuar.' });
 
-    user.passwordHash = await bcrypt.hash(newPassword, 10);
-    await user.save();
-
-    await ActivityLog.create({
-      actorId: user._id, actorRole: user.role,
-      actionType: 'password_change', metadata: { changedBy: 'self' }
-    });
+    const hash = await bcrypt.hash(newPassword, 10);
+    await db.from('users').update({ password_hash: hash }).eq('id', user.id);
+    await db.from('activity_logs').insert({ actor_id: user.id, actor_role: user.role, action_type: 'password_change', metadata: { changed_by: 'self' } });
 
     res.json({ success: true });
   } catch {

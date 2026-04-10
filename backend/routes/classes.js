@@ -1,16 +1,18 @@
-const router  = require('express').Router();
-const Class   = require('../models/Class');
-const Student = require('../models/Student');
+const router = require('express').Router();
+const db     = require('../utils/supabase');
 const { verifyToken } = require('../middleware/auth');
 
 // GET /api/classes
 router.get('/', verifyToken, async (req, res) => {
   try {
-    let filter = {};
-    if (req.user.role === 'sec_9vjecare') filter = { gradeLevel: { $lte: 9 } };
-    if (req.user.role === 'sec_gjimnaz')  filter = { gradeLevel: { $gte: 10 } };
-    const classes = await Class.find(filter).sort({ name: 1 });
-    res.json(classes);
+    let query = db.from('classes').select('*').order('name');
+
+    if (req.user.role === 'sec_9vjecare') query = query.lte('grade_level', 9);
+    if (req.user.role === 'sec_gjimnaz')  query = query.gte('grade_level', 10);
+
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json(data);
   } catch {
     res.status(500).json({ error: 'Gabim serveri.' });
   }
@@ -19,20 +21,23 @@ router.get('/', verifyToken, async (req, res) => {
 // GET /api/classes/:id/students
 router.get('/:id/students', verifyToken, async (req, res) => {
   try {
-    const cls = await Class.findById(req.params.id);
-    if (!cls) return res.status(404).json({ error: 'Klasa nuk u gjet.' });
+    const { data: cls, error: clsErr } = await db
+      .from('classes').select('*').eq('id', req.params.id).single();
+    if (clsErr || !cls) return res.status(404).json({ error: 'Klasa nuk u gjet.' });
 
-    // Role check
-    if (req.user.role === 'sec_9vjecare' && cls.gradeLevel > 9)
+    if (req.user.role === 'sec_9vjecare' && cls.grade_level > 9)
       return res.status(403).json({ error: 'Akses i ndaluar.' });
-    if (req.user.role === 'sec_gjimnaz' && cls.gradeLevel < 10)
+    if (req.user.role === 'sec_gjimnaz' && cls.grade_level < 10)
       return res.status(403).json({ error: 'Akses i ndaluar.' });
 
-    const students = await Student.find({ classId: req.params.id })
-      .select('firstName lastName parentPhone parentName')
-      .sort({ lastName: 1 });
+    const { data, error } = await db
+      .from('students')
+      .select('id, first_name, last_name, parent_phone, parent_name')
+      .eq('class_id', req.params.id)
+      .order('last_name');
 
-    res.json(students);
+    if (error) throw error;
+    res.json(data);
   } catch {
     res.status(500).json({ error: 'Gabim serveri.' });
   }
