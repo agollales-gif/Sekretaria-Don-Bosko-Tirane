@@ -17,7 +17,7 @@ function RequireAuth({ children, superAdmin = false }: { children: React.ReactNo
 
 export default function App() {
   return (
-    <Router>
+    <Router basename="/sekretaria">
       <div className="min-h-screen font-sans text-text-primary bg-off-white">
         <Routes>
           <Route path="/" element={<Login />} />
