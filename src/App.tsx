@@ -1,3 +1,4 @@
+import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { Login } from './pages/Login';
@@ -15,9 +16,10 @@ function RequireAuth({ children, superAdmin = false }: { children: React.ReactNo
   return isAdmin ? <>{children}</> : <Navigate to="/" replace />;
 }
 
+// Vite exposes env vars via import.meta.env — cast to any to avoid missing type declarations
+const basename: string = (import.meta as any).env?.VITE_BASE_PATH || '/';
+
 export default function App() {
-  // basename is /sekretaria when served via the proxy, / when on sekretaria.vercel.app directly
-  const basename = import.meta.env.VITE_BASE_PATH || '/';
   return (
     <Router basename={basename}>
       <div className="min-h-screen font-sans text-text-primary bg-off-white">
