@@ -16,8 +16,10 @@ function RequireAuth({ children, superAdmin = false }: { children: React.ReactNo
 }
 
 export default function App() {
+  // basename is /sekretaria when served via the proxy, / when on sekretaria.vercel.app directly
+  const basename = import.meta.env.VITE_BASE_PATH || '/';
   return (
-    <Router basename="/sekretaria">
+    <Router basename={basename}>
       <div className="min-h-screen font-sans text-text-primary bg-off-white">
         <Routes>
           <Route path="/" element={<Login />} />
